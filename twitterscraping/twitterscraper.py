@@ -1,18 +1,17 @@
 from twikit import Client
 import pandas as pd
 import asyncio
-import re
 import configparser
 import pathlib
 
 
-config_path = pathlib.Path(__file__).parent.absolute() / "config.ini"
+""""config_path = pathlib.Path(__file__).parent.absolute() / "config.ini"
 config = configparser.ConfigParser()
-config.read(config_path)
+config.read(config_path)"""
 
-USERNAME = config['TwitterCredentials']['USERNAME']
-EMAIL = config['TwitterCredentials']['EMAIL']
-PASSWORD = config['TwitterCredentials']['PASSWORD']
+USERNAME = 'ImbimboLuciano'
+EMAIL = 'luciano.imbimbo01@gmail.com'
+PASSWORD = 'NapoliReport10/'
 
 # Initialize client
 client = Client('it-IT')
@@ -50,11 +49,11 @@ async def retrieve_tweets():
                     'full_text': text,
                 })
 
-            
-    dataset_old = pd.read_csv('../dataset/tweet.csv')
+    dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/tweets.csv"
+    dataset_old = pd.read_csv(dataset_path)
     df = pd.DataFrame(tweets_to_store)
     new_dataset = pd.concat([dataset_old,df])
-    new_dataset.to_csv('tweets.csv', index=False, sep=';')
+    new_dataset.to_csv(dataset_path, index=False, sep=';')
     
 
 asyncio.run(retrieve_tweets())
