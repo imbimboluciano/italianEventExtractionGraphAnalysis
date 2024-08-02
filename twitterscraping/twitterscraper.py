@@ -5,9 +5,6 @@ import configparser
 import pathlib
 
 
-""""config_path = pathlib.Path(__file__).parent.absolute() / "config.ini"
-config = configparser.ConfigParser()
-config.read(config_path)"""
 
 USERNAME = ''
 EMAIL = ''
