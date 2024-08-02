@@ -3,13 +3,16 @@ import pandas as pd
 import asyncio
 import re
 import configparser
+import pathlib
 
+
+config_path = pathlib.Path(__file__).parent.absolute() / "config.ini"
 config = configparser.ConfigParser()
-config.read('config.ini')
-USERNAME = config['DEFAULT']['USERNAME']
-EMAIL = config['DEFAULT']['EMAIL']
-PASSWORD = config['DEFAULT']['PASSWORD']
+config.read(config_path)
 
+USERNAME = config['TwitterCredentials']['USERNAME']
+EMAIL = config['TwitterCredentials']['EMAIL']
+PASSWORD = config['TwitterCredentials']['PASSWORD']
 
 # Initialize client
 client = Client('it-IT')
@@ -48,8 +51,10 @@ async def retrieve_tweets():
                 })
 
             
+    dataset_old = pd.read_csv('../dataset/tweet.csv')
     df = pd.DataFrame(tweets_to_store)
-    df.to_csv('tweets.csv', index=False, sep=';')
+    new_dataset = pd.concat([dataset_old,df])
+    new_dataset.to_csv('tweets.csv', index=False, sep=';')
     
 
 asyncio.run(retrieve_tweets())
