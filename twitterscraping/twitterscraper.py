@@ -9,9 +9,9 @@ import pathlib
 config = configparser.ConfigParser()
 config.read(config_path)"""
 
-USERNAME = 'ImbimboLuciano'
-EMAIL = 'luciano.imbimbo01@gmail.com'
-PASSWORD = 'NapoliReport10/'
+USERNAME = ''
+EMAIL = ''
+PASSWORD = ''
 
 # Initialize client
 client = Client('it-IT')
