@@ -5,7 +5,6 @@ import configparser
 import pathlib
 
 
-
 USERNAME = ''
 EMAIL = ''
 PASSWORD = ''
@@ -20,6 +19,7 @@ def filter_tweet_text(text):
     return text
 
 async def retrieve_tweets():
+   
     await client.login(auth_info_1=USERNAME, auth_info_2=EMAIL, password=PASSWORD)
     client.save_cookies('cookies.json')
     client.load_cookies(path='cookies.json')
@@ -47,7 +47,15 @@ async def retrieve_tweets():
                 })
 
     dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/tweets.csv"
-    dataset_old = pd.read_csv(dataset_path)
+    try:
+        dataset_old = pd.read_csv(dataset_path, sep=';')
+    except pd.errors.EmptyDataError:
+        print('CSV file is empty')
+        dataset_old = pd.DataFrame()
+    except FileNotFoundError:
+        print('CSV file not found')
+
+    
     df = pd.DataFrame(tweets_to_store)
     new_dataset = pd.concat([dataset_old,df])
     new_dataset.to_csv(dataset_path, index=False, sep=';')
