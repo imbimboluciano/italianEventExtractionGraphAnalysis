@@ -5,9 +5,9 @@ import configparser
 import pathlib
 
 
-USERNAME = ''
+USERNAME = 'ImbimboLuciano'
 EMAIL = ''
-PASSWORD = ''
+PASSWORD = 'NapoliReport10/'
 
 # Initialize client
 client = Client('it-IT')
@@ -43,6 +43,8 @@ async def retrieve_tweets():
                     'created_at': tweet.created_at,
                     'favorite_count': tweet.favorite_count,
                     'view_count': tweet.view_count,
+                    'retweet_count': tweet.retweet_count,
+                    'reply_count': tweet.reply_count,
                     'full_text': text,
                 })
 
