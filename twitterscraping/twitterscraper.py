@@ -5,9 +5,9 @@ import configparser
 import pathlib
 
 
-USERNAME = '@NewsR4261'
+USERNAME = ''
 EMAIL = ''
-PASSWORD = 'Mastrangelo8'
+PASSWORD = ''
 
 # Initialize client
 client = Client('it-IT')
