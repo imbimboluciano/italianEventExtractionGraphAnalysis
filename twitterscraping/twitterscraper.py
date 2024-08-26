@@ -5,9 +5,9 @@ import configparser
 import pathlib
 
 
-USERNAME = ''
+USERNAME = '@NewsR4261'
 EMAIL = ''
-PASSWORD = ''
+PASSWORD = 'Mastrangelo8'
 
 # Initialize client
 client = Client('it-IT')
@@ -48,7 +48,7 @@ async def retrieve_tweets():
                     'full_text': text,
                 })
 
-    dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/tweets.csv"
+    dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/right_tweets.csv"
     try:
         dataset_old = pd.read_csv(dataset_path, sep=';')
     except pd.errors.EmptyDataError:
