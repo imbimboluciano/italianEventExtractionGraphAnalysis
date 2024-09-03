@@ -10,9 +10,12 @@ EMAIL = ''
 PASSWORD = ''
 
 # Initialize client
+#client = Client('us-US')
 client = Client('it-IT')
 
-users = ["Agenzia_ansa", "repubblica", "Corriere", "fattoquotidiano", "libero_it", "LaVeritaWeb", "ilfoglio_it", "LaStampa", "qn_carlino","ilmessaggeroit","sole24ore"]
+
+italian_users = ["Agenzia_ansa", "repubblica", "Corriere"]
+english_users = ["guardian", "BBCWorld", "nytimes"]
 
 def filter_tweet_text(text):
     text = ' '.join(text.splitlines())
@@ -26,11 +29,11 @@ async def retrieve_tweets():
 
     tweets_to_store = []
 
-    for user in users:
+    for user in italian_users:
 
         user_retrieved = await client.get_user_by_screen_name(user)
-        tweets = await client.get_user_tweets(user_retrieved.id, count=40, tweet_type='Tweets') 
-        for i in range(2):
+        tweets = await client.get_user_tweets(user_retrieved.id, count=20, tweet_type='Tweets') 
+        for i in range(1):
             
             if(i != 0):
                 tweets = await tweets.next()
@@ -48,7 +51,7 @@ async def retrieve_tweets():
                     'full_text': text,
                 })
 
-    dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/right_tweets.csv"
+    dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/italian_tweets.csv"
     try:
         dataset_old = pd.read_csv(dataset_path, sep=';')
     except pd.errors.EmptyDataError:

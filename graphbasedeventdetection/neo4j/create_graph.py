@@ -8,7 +8,7 @@ driver = GraphDatabase.driver(uri, auth=("neo4j", "firstpaper"))
 
 def keyword_lists(keywords):
     return keywords.split(',')
-
+    
 def drop_all_nodes(driver):
     with driver.session() as session:
         session.run("""
@@ -31,17 +31,20 @@ def create_cooccurrence_relationships(driver, documents):
         UNWIND document AS keyword2
         WITH keyword1, keyword2
         WHERE keyword1 <> keyword2
-        MATCH (k1:Keyword {name: keyword1}), (k2:Keyword {name: keyword2})
-        MERGE (k1)-[r:COOCCURS_WITH]-(k2)
-        ON CREATE SET r.weight = 1
-        ON MATCH SET r.weight = r.weight + 1;
+        WITH (CASE WHEN keyword1 < keyword2 THEN keyword1 ELSE keyword2 END) AS kw1,
+             (CASE WHEN keyword1 < keyword2 THEN keyword2 ELSE keyword1 END) AS kw2
+        MATCH (k1:Keyword {name: kw1}), (k2:Keyword {name: kw2})
+        MERGE (k1)-[r:COOCCURS_WITH]->(k2);
         """, documents=documents)
 
-# Example documents
-dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/keyword_tweets.csv"
-dataset = pd.read_csv(dataset_path, sep=',')
-keywords = dataset.iloc[:,8]
+#dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "../dataset/keyword_english_tweets.csv"
+dataset_path = pathlib.Path(__file__).parent.parent.parent.absolute() / "dataset/keyword_italian_tweets.csv"
+dataset = pd.read_csv(dataset_path, sep=';')
+keywords = dataset['keyword'].astype(dtype='str')
 keywords = keywords.apply(keyword_lists)
+keywords = keywords[keywords.apply(lambda x: len(x) > 1)]
+
+keywords = keywords.to_list()
 
 drop_all_nodes(driver)
 
