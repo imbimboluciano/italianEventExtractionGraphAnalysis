@@ -13,6 +13,8 @@ PASSWORD = ''
 client = Client('us-US')
 #client = Client('it-IT')
 
+topics = ['gaza', 'venezuela', 'ukraine', 'paralympics','kenya', 'us election']
+
 def filter_tweet_text(text):
     text = ' '.join(text.splitlines())
     return text
@@ -25,22 +27,24 @@ async def retrieve_tweets():
 
     tweets_to_store = []
 
-    tweets = await client.search_tweet('news','Latest', count=20)
-    for tweet in tweets:
-        text = filter_tweet_text(tweet.text)
+    for topic in topics:
+        tweets = await client.search_tweet('news','Latest', count=20)
+        for tweet in tweets:
+            text = filter_tweet_text(tweet.text)
 
-        tweets_to_store.append({
-            'created_at': tweet.created_at,
-            'favorite_count': tweet.favorite_count,
-            'view_count': tweet.view_count,
-            'retweet_count': tweet.retweet_count,
-            'reply_count': tweet.reply_count,
-            'full_text': text,
-        })
+            tweets_to_store.append({
+                'author': tweet.user,
+                'created_at': tweet.created_at,
+                'favorite_count': tweet.favorite_count,
+                'view_count': tweet.view_count,
+                'retweet_count': tweet.retweet_count,
+                'reply_count': tweet.reply_count,
+                'full_text': text,
+            })
 
    
 
-    dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/latest_english_tweets.csv"
+    dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/english_tweets.csv"
     try:
         dataset_old = pd.read_csv(dataset_path, sep=';')
     except pd.errors.EmptyDataError:

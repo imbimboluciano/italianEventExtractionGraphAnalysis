@@ -1,12 +1,14 @@
-from neo4j import GraphDatabase
 import networkx as nx
 import math
-from collections import defaultdict
-from itertools import combinations
 import pathlib
 import pandas as pd
+import numpy as np
+from collections import defaultdict
+from itertools import combinations
+from neo4j import GraphDatabase
 
-# Connect to Neo4j
+
+
 uri = "bolt://localhost:7687"
 username = "neo4j"
 password = "firstpaper"
@@ -15,24 +17,24 @@ driver = GraphDatabase.driver(uri, auth=(username, password))
 def keyword_lists(keywords):
     return keywords.split(',')
 
-def keyword_string(keyword):
-    return ','.join(keyword)
+def in_same_cluster(G, node1, node2):
+    components = list(nx.connected_components(G))
+    for component in components:
+        if node1 in component and node2 in component:
+            return True
+    return False
 
-# Step 1: Fetch the graph from Neo4j
 def fetch_graph(tx):
     query = """
     MATCH (n)-[r]->(m)
     RETURN n, r, m
     """
     result = tx.run(query)
-    graph = nx.Graph()  # or use nx.Graph() for undirected graphs
+    graph = nx.Graph()  
 
     for record in result:
-        print(record.data())
         node_a = record['n']
         node_b = record['m']
-        name_a = record['n']['name']
-        name_b = record['m']['name']
         relationship = record['r']
 
         node_a_properties = dict(node_a)
@@ -42,35 +44,175 @@ def fetch_graph(tx):
         node_b_name = node_b_properties.pop('name', None)
 
 
-        # Add nodes and edges to the NetworkX graph
         graph.add_node(node_a.id, name=node_a_name, **node_a_properties)
         graph.add_node(node_b.id, name=node_b_name, **node_b_properties)
         
-        # Add edge with its properties
         graph.add_edge(node_a.id, node_b.id, **relationship)
 
     return graph
+
+def remove_edge(tx, node1, node2):
+    query = """
+    MATCH (n1:Keyword)-[r:CO_OCCURS_WITH]->(n2:Keyword)
+    WHERE id(n1) = $node1 AND id(n2) = $node2
+    DELETE r
+    """
+    tx.run(query, node1=node1, node2=node2)
+
+def remove_nodes(tx, removal_set):
+    for node_id in removal_set:
+        tx.run("MATCH (n:Keyword) WHERE id(n) = $node_id DETACH DELETE n", node_id=node_id)
+
+
+def verify_and_cleanup(G, topicVertex, lambda_threshold, co_occurrences):
+    # 1-Hop Verification
+    one_hop_neighbors = list(nx.single_source_shortest_path_length(G, topicVertex, cutoff=1).keys())
+    print(f"From {topicVertex} to {one_hop_neighbors}")
+    for node in one_hop_neighbors:
+            if node != topicVertex:
+                co_occurrence_count = co_occurrences.get((G.nodes[topicVertex]['name'], G.nodes[node]['name']), 0)
+                print(co_occurrence_count)
+                if co_occurrence_count < lambda_threshold:
+                    print(f"Remove node {node}")
+                    G.remove_node(node)
+    
+    # More than 2-Hop Verification
+    for node in list(G.nodes):
+        if nx.shortest_path_length(G, source=topicVertex, target=node) > 1:
+            path = nx.shortest_path(G, source=topicVertex, target=node)
+            print(path)
+            for i in range(len(path) - 1):
+                co_occurrence_count = co_occurrences.get((G.nodes[path[i]]['name'], G.nodes[path[i + 1]]['name']), 0)
+                if co_occurrence_count < lambda_threshold:
+                    G.remove_node(node)
+                    break
+
 
 
 with driver.session() as session:
     G = session.execute_read(fetch_graph)
 
-# Print node IDs, names, and other properties
-for node in G.nodes(data=True):
-    print(f"Node ID: {node[0]}, Name: {node[1].get('name')}, Properties: {node[1]}")
 
-dataset_path = pathlib.Path(__file__).parent.parent.parent.absolute() / "dataset/keyword_italian_tweets.csv"
+#dataset_path = pathlib.Path(__file__).parent.parent.parent.absolute() / "dataset/keyword_italian_tweets.csv"
+dataset_path = pathlib.Path(__file__).parent.parent.parent.absolute() / "dataset/keyword_english_tweets.csv"
 tweets_df = pd.read_csv(dataset_path,sep=";")
 
-tweets_df['keyword'] = tweets_df['keyword'].astype(dtype='str')
-tweets_df['keyword'] = tweets_df['keyword'].apply(keyword_lists)
-tweets_df = tweets_df[tweets_df['keyword'].apply(lambda x: len(x) > 1)]
+tweets_df = tweets_df.head(40)
+keywords_extracted = tweets_df['keyword'].astype(dtype='str')
+keywords_extracted = keywords_extracted.apply(keyword_lists)
+keywords_extracted = keywords_extracted[keywords_extracted.apply(lambda x: len(x) > 1)]
 
-tweets_df['keyword'] = tweets_df['keyword'].apply(keyword_string)
-tweets_df['keyword'] = tweets_df['keyword'].fillna('').astype(str)
+list_of_list_of_keyword = keywords_extracted.to_list()
 
 
-# Initialize data structures
+removal_set = []
+
+vbc = nx.betweenness_centrality(G, weight='weight')
+topicVertex = max(vbc, key=vbc.get)
+
+for node in G.nodes:
+    if node != topicVertex:
+        try:
+            distance = nx.shortest_path_length(G, source=topicVertex, target=node) 
+            #The length of the path is always 1 less than the number of nodes involved in the path since the length measures the number of edges followed.
+            if distance > 1:
+                removal_set.append(node)
+        except nx.NetworkXNoPath:
+            # If there's no path, it's considered "infinitely" far away
+            removal_set.append(node)
+
+print("Nodes to remove due to distance > 2:", removal_set)
+
+ebc = nx.edge_betweenness_centrality(G, weight='weight')
+
+ebc_values = list(ebc.values())
+m = np.mean(ebc_values)
+sigma = np.std(ebc_values)
+
+threshold = m + 2 * sigma
+lambda_threshold = 0.4
+
+print(threshold)
+
+for edge,centrality in ebc.items():
+    if centrality > threshold:
+        u, v = edge
+        
+        # Duplicate the two vertices connected by the edge ei (u, v)
+        u_new = f'{u}_copy'
+        v_new = f'{v}_copy'
+
+        # Add the duplicated vertices to the graph
+        G.add_node(u_new)
+        G.add_node(v_new)
+
+        # Connect the new vertices to the original neighbors
+        for neighbor in list(G.neighbors(u)):
+            G.add_edge(u_new, neighbor)
+
+        for neighbor in list(G.neighbors(v)):
+            G.add_edge(v_new, neighbor)
+
+        G.remove_edge(u, v)
+        G.add_edge(u, v_new)
+        G.add_edge(v, u_new)
+
+        print(f"Cut edge: {u}-{v}, and created new clusters with {u_new} and {v_new}")
+    else:
+        for vertex in removal_set:
+            if not in_same_cluster(G, topicVertex, vertex):
+                removal_set.remove(vertex)
+
+
+print("Node to delete:", removal_set)
+G.remove_nodes_from(removal_set)
+
+
+
+
+with driver.session() as session:
+    for edge,centrality in ebc.items():  # ebc is the edge betweenness centrality dictionary
+        if not G.has_edge(*edge):  # Check if the edge was removed in NetworkX
+            session.execute_write(remove_edge, edge[0], edge[1])
+
+    session.execute_write(remove_nodes,removal_set)
+
+
+
+
+co_occurrences = defaultdict(int)
+
+for keyword_list in list_of_list_of_keyword:
+    for pair in combinations(sorted(keyword_list), 2):
+        co_occurrences[pair] += 1
+
+
+co_occurrences = dict(co_occurrences)
+
+connected_components = list(nx.connected_components(G))  # This is for an undirected graph
+
+print(f"Number of clusters: {len(connected_components)}" )
+
+
+"""subgraphs = [G.subgraph(component).copy() for component in connected_components]
+
+removed_nodes = set()
+
+for subgraph in subgraphs:
+    original_nodes = set(subgraph.nodes())
+    
+    vbc = nx.betweenness_centrality(subgraph, weight='weight')
+    topicVertex = max(vbc, key=vbc.get)
+    
+    verify_and_cleanup(subgraph, topicVertex, lambda_threshold, co_occurrences)
+    
+    removed = original_nodes - set(subgraph.nodes())
+    removed_nodes.update(removed)
+    with driver.session() as session:
+        session.execute_write(remove_nodes, removed_nodes)"""
+
+
+"""# Initialize data structures
 retweets_t = defaultdict(int)
 likes_t = defaultdict(int)
 retweets_t_1 = defaultdict(int)
@@ -114,7 +256,7 @@ mu = 0.8
 lambda_threshold = 0.4  # Threshold value for simultaneous occurrence
 
 # Replace None weights and compute new weights for each edge
-"""for (u, v, data) in G.edges(data=True):
+for (u, v, data) in G.edges(data=True):
     rt_t = retweets_t.get(G.nodes[u].get('name'))
     ln_t = likes_t.get(G.nodes[u].get('name'))
     rt_t_1 = retweets_t_1.get(G.nodes[u].get('name'))
@@ -136,74 +278,20 @@ lambda_threshold = 0.4  # Threshold value for simultaneous occurrence
     w_ij = alpha * NS_ij + (1 - alpha) * F_ij
     
     # Assign the computed weight to the edge
-    data['weight'] = w_ij"""
-
-# Step 2: Compute Vertex Betweenness Centrality (VBC)
-vbc = nx.betweenness_centrality(G, weight='weight')
-topicVertex = max(vbc, key=vbc.get)
-
-# Step 3: Identify nodes for removal based on distance
-removal_set = set()
-
-# Check the distance of each node from the topicVertex
-for node in G.nodes:
-    if node != topicVertex:
-        try:
-            # Using shortest path length to determine distance
-            distance = nx.shortest_path_length(G, source=topicVertex, target=node)
-            if distance > 2:
-                removal_set.add(node)
-        except nx.NetworkXNoPath:
-            # If there's no path, it's considered "infinitely" far away
-            removal_set.add(node)
-
-print("Nodes to remove due to distance > 2:", removal_set)
-
-# Compute Edge Betweenness Centrality (EBC)
-ebc = nx.edge_betweenness_centrality(G, weight='weight')
-
-# Calculate mean and standard deviation of EBC values
-ebc_values = list(ebc.values())
-mean_ebc = sum(ebc_values) / len(ebc_values)
-std_dev_ebc = (sum((x - mean_ebc) ** 2 for x in ebc_values) / len(ebc_values)) ** 0.5
-
-# Edge cutting and cluster identification
-for edge, centrality in ebc.items():
-    if centrality > (mean_ebc + 2 * std_dev_ebc):
-        # If EBC is greater than mean + 2*std_dev, remove the edge
-        G.remove_edge(*edge)
-    else:
-        # Check if nodes in removal set are still in the same cluster
-        u, v = edge
-        if u in removal_set and v in removal_set:
-            if nx.has_path(G, u, v):
-                removal_set.discard(u)
-                removal_set.discard(v)
-
-print("Final removal set:", removal_set)
-
-def remove_nodes_from_neo4j(tx, removal_set):
-    for node_id in removal_set:
-        tx.run("MATCH (n:Keyword) WHERE id(n) = $node_id DETACH DELETE n", node_id=node_id)
-
-with driver.session() as session:
-    session.write_transaction(remove_nodes_from_neo4j, removal_set)
+    data['weight'] = w_ij
 
 
 
-connected_components = list(nx.connected_components(G))  # This is for an undirected graph
-# If G is directed, use nx.weakly_connected_components(G) or nx.strongly_connected_components(G)
 
-print(f"Number of clusters: {len(connected_components)}" )
-# Create subgraphs from each connected component
-subgraphs = [G.subgraph(component).copy() for component in connected_components]
+
+
 
 
 # Step 5: Verification Step
 
 
 # Step 6: Update Neo4j with the new edge weights
-"""def update_edge_weights(tx, source, target, weight):
+def update_edge_weights(tx, source, target, weight):
     query = 
     MATCH (a:Keyword)-[r:COOCCURS_WITH]-(b:Keyword)
     WHERE id(a) = $source AND id(b) = $target
@@ -217,52 +305,11 @@ def main():
             session.execute_write(update_edge_weights, u, v, data['weight'])
     print("All edge weights updated successfully!")
 
-main()"""
-# Define the verify_and_cleanup function (given in your question)
-def verify_and_cleanup(G, topicVertex, lambda_threshold):
-    # 1-Hop Verification
-    one_hop_neighbors = list(nx.single_source_shortest_path_length(G, topicVertex, cutoff=1).keys())
-    for i, node1 in enumerate(one_hop_neighbors):
-        for node2 in one_hop_neighbors[i+1:]:
-            co_occurrence_count = co_occurrences.get((node1, node2), 0)
-            if co_occurrence_count < lambda_threshold:
-                G.remove_node(node2)
-    
-    # More than 2-Hop Verification
-    for node in list(G.nodes):
-        if nx.shortest_path_length(G, source=topicVertex, target=node) > 2:
-            path = nx.shortest_path(G, source=topicVertex, target=node)
-            for i in range(len(path) - 1):
-                co_occurrence_count = co_occurrences.get((path[i], path[i + 1]), 0)
-                if co_occurrence_count < lambda_threshold:
-                    G.remove_node(node)
-                    break
+main()
 
-def remove_nodes(tx, nodes):
-    query = """
-    UNWIND $nodes AS node_id
-    MATCH (n)
-    WHERE id(n) = node_id
-    DETACH DELETE n"""
-    tx.run(query, nodes=list(nodes))
 
 # Apply the verify_and_cleanup function to each subgraph
-removed_nodes = set()
-
-for subgraph in subgraphs:
-    original_nodes = set(subgraph.nodes())
-    
-    vbc = nx.betweenness_centrality(subgraph, weight='weight')
-    topicVertex = max(vbc, key=vbc.get)
-    
-    # Apply the verification and cleanup
-    #verify_and_cleanup(subgraph, topicVertex, lambda_threshold)
-    
-    # Identify removed nodes
-    removed = original_nodes - set(subgraph.nodes())
-    removed_nodes.update(removed)
-    with driver.session() as session:
-        session.execute_write(remove_nodes, removed_nodes)
 
 
-driver.close()
+
+driver.close()"""
