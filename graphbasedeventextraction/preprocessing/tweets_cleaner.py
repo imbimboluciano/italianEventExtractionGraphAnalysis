@@ -30,15 +30,18 @@ def trim_spaces_in_middle(text):
 
 
 
-# dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/italian_tweets.csv"
-dataset_path = pathlib.Path(__file__).parent.parent.parent.absolute() / "dataset/english_tweets.csv"
+dataset_path = pathlib.Path(__file__).parent.parent.parent.absolute() / "dataset/italian_tweets.csv"
+#dataset_path = pathlib.Path(__file__).parent.parent.parent.absolute() / "dataset/english_tweets_v2.csv"
 
 
 df = pd.read_csv(dataset_path, sep=';')
 df['cleaned_tweets'] = df['full_text'].apply(clean_tweet)
+#df['cleaned_tweets'] = df['text'].apply(clean_tweet)
 df['cleaned_tweets'] = df['cleaned_tweets'].apply(remove_punctuation)
 df['cleaned_tweets'] = df['cleaned_tweets'].apply(trim_spaces_in_middle)
 
-dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/cleaned_english_tweets.csv"
-df.drop(['favorite_count','view_count','retweet_count','reply_count', 'full_text'], axis=1, inplace=True)
+dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/cleaned_italian_tweets.csv"
+df.drop(['author','favorite_count','view_count','retweet_count','reply_count','full_text'], axis=1, inplace=True)
+df.rename(columns={'created_at': 'date'}, inplace=True)
+#df.drop(['text', 'Unnamed: 0'], axis=1, inplace=True)
 df.to_csv(dataset_path, sep=';')

@@ -1,16 +1,18 @@
+from neo4j import GraphDatabase
 import spacy
 from nltk.corpus import stopwords
-from neo4j import GraphDatabase
 import re, pathlib
 import pandas as pd
 
 # Load NLTK stop words
 import nltk
 nltk.download('stopwords')
-stop_words = set(stopwords.words('english'))
+#stop_words = set(stopwords.words('english'))
+stop_words = set(stopwords.words('italian'))
 
 # Load spaCy's small English model for entity recognition
-nlp = spacy.load("en_core_web_sm")
+#nlp = spacy.load("en_core_web_sm")
+nlp = spacy.load("it_core_news_lg")
 
 # Connect to Neo4j
 uri = "bolt://localhost:7687"  # Adjust if needed
@@ -24,6 +26,7 @@ k = 2
 def drop_all_nodes(tx):
     tx.run("""MATCH (n) DETACH DELETE n""")
 
+# Function to extract NEs and their cleaned context (stop words removed from context)
 def extract_entities_with_context(tweet):
     doc = nlp(tweet)
     entities_with_context = []
@@ -40,35 +43,38 @@ def extract_entities_with_context(tweet):
             
             entities_with_context.append((ent.text,ent.label_, context_before, context_after))
     
+    print(entities_with_context)
     return entities_with_context
 
-
+# Function to create nodes and edges in the Neo4j graph
 def create_neo4j_graph(tx, entities_with_context):
     for entity,label,context_before, context_after in entities_with_context:
-        # Create a node for the entity (NE)
-        tx.run("MERGE (n:Entity {name: $entity, label:$label})", entity=entity, label=label)
+        # Treat NE as a term (same node type)
+        tx.run("MERGE (n:Term {name: $entity, label: $label})", entity=entity, label=label)
         
-        # Create nodes and edges for the context terms before the NE
+        # Create directed edges from context terms before the NE (predecessors) to the NE
         for term in context_before:
             tx.run("MERGE (t:Term {name: $term})", term=term)
             tx.run("""
-                MATCH (n:Entity {name: $entity}), (t:Term {name: $term})
-                MERGE (n)-[r:CO_OCCUR]->(t)
+                MATCH (n:Term {name: $entity}), (t:Term {name: $term})
+                MERGE (t)-[r:POINTS_TO]->(n)
                 ON CREATE SET r.weight = 1
                 ON MATCH SET r.weight = r.weight + 1
                 """, entity=entity, term=term)
         
-        # Create nodes and edges for the context terms after the NE
+        # Create directed edges from the NE to the context terms after the NE (successors)
         for term in context_after:
             tx.run("MERGE (t:Term {name: $term})", term=term)
             tx.run("""
-                MATCH (n:Entity {name: $entity}), (t:Term {name: $term})
-                MERGE (n)-[r:CO_OCCUR]->(t)
+                MATCH (n:Term {name: $entity}), (t:Term {name: $term})
+                MERGE (n)-[r:POINTS_TO]->(t)
                 ON CREATE SET r.weight = 1
                 ON MATCH SET r.weight = r.weight + 1
                 """, entity=entity, term=term)
 
+# Sample cleaned tweets
 dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/cleaned_english_tweets.csv"
+dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/cleaned_italian_tweets.csv"
 tweets = pd.read_csv(dataset_path, sep=';')
 cleaned_tweet = tweets['cleaned_tweets']
 
@@ -79,5 +85,4 @@ with driver.session() as session:
         entities_with_context = extract_entities_with_context(tweet)
         session.execute_write(create_neo4j_graph, entities_with_context)
 
-# Close the Neo4j driver
 driver.close()

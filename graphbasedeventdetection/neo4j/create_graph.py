@@ -28,7 +28,8 @@ def create_cooccurrence_relationships(tx, documents):
     UNWIND $documents AS pair
     MATCH (k1:Keyword {name: pair.k1})
     MATCH (k2:Keyword {name: pair.k2})
-    MERGE (k1)-[:CO_OCCURS_WITH]->(k2);
+    MERGE (k1)-[:CO_OCCURS_WITH]->(k2)
+    MERGE (k2)-[:CO_OCCURS_WITH]->(k1);
     """, documents=documents)
 
 
@@ -38,7 +39,7 @@ def fetch_graph(tx):
     RETURN n, r, m
     """
     result = tx.run(query)
-    graph = nx.Graph()  # or use nx.Graph() for undirected graphs
+    graph = nx.DiGraph()  # or use nx.Graph() for undirected graphs
 
     for record in result:
         node_a = record['n']
@@ -91,7 +92,7 @@ keywords_extracted = keywords_extracted[keywords_extracted.apply(lambda x: len(x
 list_of_lists_of_keyword = keywords_extracted.to_list()"""
 
 list_of_lists_of_keyword = [
-    ["cheongju", "flood", "preparation","evacuation"],
+    ["cheongju","preparation","evacuation"],
     ["cheongju", "preparation", "disaster","flood"],
     ["text", "disaster", "cheongju"],
     ["text","musim river", "police"],

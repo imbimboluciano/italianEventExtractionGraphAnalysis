@@ -142,7 +142,6 @@ for edge,centrality in ebc.items():
         u_new = f'{u}_copy'
         v_new = f'{v}_copy'
 
-        # Add the duplicated vertices to the graph
         G.add_node(u_new)
         G.add_node(v_new)
 
@@ -172,7 +171,7 @@ G.remove_nodes_from(removal_set)
 
 with driver.session() as session:
     for edge,centrality in ebc.items():  # ebc is the edge betweenness centrality dictionary
-        if not G.has_edge(*edge):  # Check if the edge was removed in NetworkX
+        if not G.has_edge(*edge): 
             session.execute_write(remove_edge, edge[0], edge[1])
 
     session.execute_write(remove_nodes,removal_set)

@@ -1,89 +1,109 @@
-import spacy
-import pandas as pd
+from neo4j import GraphDatabase
 import networkx as nx
 from sklearn.feature_extraction.text import TfidfVectorizer
-from neo4j import GraphDatabase
+from datetime import datetime
+import pandas as pd
 import numpy as np
-import nltk
 import pathlib
-import math
 
-# Load NLTK stop words
-nltk.download('stopwords')
-stop_words = set(nltk.corpus.stopwords.words('english'))
-
-# Load spaCy's small English model for entity recognition
-nlp = spacy.load("en_core_web_sm")
-
-# Connect to Neo4j
 uri = "bolt://localhost:7687"
 username = "neo4j"
 password = "secondpaper"
 driver = GraphDatabase.driver(uri, auth=(username, password))
 
-# Fetch nodes and edges from Neo4j
-def fetch_data_from_neo4j():
-    query_nodes = """
-    MATCH (n)
-    RETURN n.name AS name, labels(n) AS label
-    """
-    query_edges = """
-    MATCH (n)-[r:CO_OCCUR]->(m)
-    RETURN n.name AS source, m.name AS target, r.weight AS weight
-    """
+def remove_offset(date_string):
+    date_string = str(datetime.strptime(date_string, "%a %b %d %H:%M:%S %z %Y")) # Only for italian
+    if date_string.endswith('+00:00'):
+        return date_string[:-6]  
+    return date_string
+
+
+def compute_community_detection(tx):
+    query = "CALL gds.graph.drop('myGraph') YIELD graphName;"
+    tx.run(query)
+
+    query = "CALL gds.graph.project('myGraph', 'Term', 'POINTS_TO')"
+    tx.run(query)
+
+    query = """CALL gds.louvain.write('myGraph', { writeProperty: 'community' })
+    YIELD communityCount, modularity, modularities"""
+    tx.run(query)
+
+
+
+def fetch_subgraphs(tx):
+    query = "MATCH (n:Term) RETURN DISTINCT n.community as community"
+    communities = tx.run(query).data()
+
+    subgraphs = {}
     
-    nodes = []
-    edges = []
+    for record in communities:
+        community_id = record["community"]
 
-    with driver.session() as session:
-        # Fetch nodes
-        result_nodes = session.run(query_nodes)
-        for record in result_nodes:
-            nodes.append((record["name"], {"label": record["label"]}))
+        query_nodes = f"""
+        MATCH (n:Term)
+        WHERE n.community = {community_id}
+        RETURN n.name AS name, n.label AS label
+        """
+        query_edges = f"""
+        MATCH (n:Term)-[r:POINTS_TO]-(m:Term)
+        WHERE n.community = {community_id} AND m.community = {community_id}
+        RETURN n.name AS source, m.name AS target, r.weight AS weight
+        """
+    
+        nodes = []
+        edges = []
 
-        # Fetch edges
-        result_edges = session.run(query_edges)
-        for record in result_edges:
-            edges.append((record["source"], record["target"], record["weight"]))
+        with driver.session() as session:
+       
+            result_nodes = session.run(query_nodes)
+            for record in result_nodes:
+                nodes.append((record["name"], {"label": record["label"]}))
 
-    return nodes, edges
+           
+            result_edges = session.run(query_edges)
+            for record in result_edges:
+                edges.append((record["source"], record["target"], record["weight"]))
 
-def create_networkx_graph(nodes, edges):
-    G = nx.DiGraph()  # Directed graph
+        G = nx.DiGraph()  # Directed graph
 
-    # Add nodes to the graph
-    for node, attrs in nodes:
-        G.add_node(node, **attrs)
+        
+        for node, attrs in nodes:
+            G.add_node(node, **attrs)
 
-    # Add edges to the graph
-    for source, target, weight in edges:
-        G.add_edge(source, target, weight=weight)
+       
+        for source, target, weight in edges:
+            G.add_edge(source, target, weight=weight)
 
-    return G
+        
+            
+        subgraphs[community_id] = G
+    
+    return subgraphs
 
-# Compute TF-IDF scores for the nodes
 def compute_tfidf_scores(documents):
     vectorizer = TfidfVectorizer()
     tfidf_matrix = vectorizer.fit_transform(documents)
     tfidf_scores = np.asarray(tfidf_matrix.mean(axis=0)).ravel()
     
-    # Create a dictionary of terms and their corresponding TF-IDF scores
     terms = vectorizer.get_feature_names_out()
     tfidf_dict = dict(zip(terms, tfidf_scores))
     
     return tfidf_dict
 
-# Compute PageRank with TF-IDF as penalization parameter
+
 def compute_pagerank(G, tfidf_dict, d=0.85, tol=1.0e-4):
     n = G.number_of_nodes()
-    pagerank = dict.fromkeys(G, 1.0 / n)  # initial value
+    if n == 0:
+        n = 1
+    pagerank = dict.fromkeys(G, 1.0 / n)  
     damping_value = (1.0 - d) / n
 
     while True:
-        diff = 0  # convergence difference
+        diff = 0  
         new_pagerank = dict.fromkeys(G, 0)
         for node in G:
-            penalty = tfidf_dict.get(node, 1)  # Get TF-IDF for node, default to 1
+            penalty = tfidf_dict.get(node, 1)  
             for nbr in G.neighbors(node):
                 new_pagerank[nbr] += d * pagerank[node] / G.out_degree(node)
             new_pagerank[node] += damping_value * penalty * 1000  # Add damping factor with penalty
@@ -94,40 +114,14 @@ def compute_pagerank(G, tfidf_dict, d=0.85, tol=1.0e-4):
 
     return pagerank
 
-# Fetch data from Neo4j
-nodes, edges = fetch_data_from_neo4j()
-
-# Create the NetworkX graph
-G = create_networkx_graph(nodes, edges)
-
-# Load the tweets dataset
-dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/cleaned_english_tweets.csv"
-dataset = pd.read_csv(dataset_path, sep=';')
-cleaned_tweets = dataset['cleaned_tweets'].tolist()
-
-# Compute TF-IDF scores based on tweet content
-tfidf_dict = compute_tfidf_scores(cleaned_tweets)
-
-# Compute PageRank with TF-IDF penalization
-pagerank_scores = compute_pagerank(G, tfidf_dict)
-
-# Print the PageRank scores
-for node, score in pagerank_scores.items():
-    print(f"Node: {node}, PageRank: {score}")
-
-# Close the Neo4j driver
-driver.close()
-
 
 def graph_processing(G, pagerank_scores, alpha):
-    E = []  # List of important events
-    H = [v for v in G.nodes if pagerank_scores[v] >= alpha]  # Nodes with PageRank above the threshold
+    E = [] 
+    H = [v for v in G.nodes if pagerank_scores[v] >= alpha]  
 
-    print(H)
     while H:
-        # Create a copy of the graph
         G_prime = G.copy()
-        vi = H.pop()  # Pop the last node from the list H
+        vi = H.pop()  
         keywords = set()
         max_in_weight = 0
         highest_predecessor = None
@@ -139,11 +133,12 @@ def graph_processing(G, pagerank_scores, alpha):
 
         if highest_predecessor is not None:
             keywords.add(highest_predecessor)
-            G_prime.remove_edge(highest_predecessor, vi)
+            if G_prime.has_edge(vi, highest_predecessor):
+                G_prime.remove_edge(highest_predecessor, vi)
 
         keywords.add(vi)
 
-        # Find the highest weighted successor
+        
         max_out_weight = 0
         highest_successor = None
         for successor in G.successors(vi):
@@ -152,59 +147,88 @@ def graph_processing(G, pagerank_scores, alpha):
                 max_out_weight = weight
                 highest_successor = successor
 
-        print()
         if highest_successor is not None:
             keywords.add(highest_successor)
-            G_prime.remove_edge(vi, highest_successor)
+            if G_prime.has_edge(vi, highest_successor):
+                G_prime.remove_edge(vi, highest_successor)
     
-        print(keywords)
-        # Check if removing edges disconnects the graph
         if not nx.is_connected(G_prime.to_undirected()):
-            # Find disconnected vertices
+            
             disc_vertices = list(nx.connected_components(G_prime.to_undirected()))
             for vertices in disc_vertices:
                 for vertex in vertices:
                     keywords.add(vertex)
         
-        print(keywords)
-        # Determine "who," "where," and "what" entities
-        who = {v for v in keywords if G.nodes[vi].get('label') in ['PERSON', 'ORG']}
-        where = {v for v in keywords if G.nodes[vi].get('label') in ['GPE','LOC']}
+        
+        who = {v for v in keywords if G.nodes[v].get('label') in ['PERSON', 'ORG']}
+        where = {v for v in keywords if G.nodes[v].get('label') in ['GPE','LOC']}
         what = keywords - who - where
 
-        # Get the corresponding tweets based on keywords
-        tweets = [tweet for tweet in cleaned_tweets if any(keyword in tweet for keyword in keywords)]
-        print(dataset[dataset['cleaned_tweets'] == tweets]['created at'])
-        #when = min(tweets, key=lambda x: x.date) if tweets else None
 
+        dataset['cleaned_date'] = dataset['date'].apply(remove_offset)
+        dataset['datetime'] = pd.to_datetime(dataset['cleaned_date'])
+        filtered_df = dataset[dataset['cleaned_tweets'].apply(lambda x: any(keyword in x for keyword in keywords))]
         when = None
-        # Form the event tuple and add it to the list of events E
-        event = (what, who, where, when)
-        E.append(event)
-    # Merge events based on common "what," "who," and "where"
-    """"for i, e in enumerate(E):
-        for j, e_prime in enumerate(E):
-            if i != j:
-                if e[0] & e_prime[0]:  # Common "what"
-                    if e[1] & e_prime[1]:  # Common "who"
-                        E[j] = merge_events(e, e_prime)
-                    if e[2] & e_prime[2]:  # Common "where"
-                        E[j] = merge_events(e, e_prime)
+        if not filtered_df.empty:
+            when = filtered_df.loc[filtered_df['datetime'].idxmin()]['datetime']
 
-    # Discard events without "who" or "where"
-    E = [e for e in E if e[1] or e[2]]"""
+        event = {'what': what, 'who': who, 'where': where, 'when': when}
+        E.append(event)
 
     return E
 
-def merge_events(event1, event2):
-    # Merge two events by combining their attributes
-    what = event1[0] | event2[0]
-    who = event1[1] | event2[1]
-    where = event1[2] | event2[2]
-    when = min(event1[3], event2[3]) if event1[3] and event2[3] else event1[3] or event2[3]
-    return (what, who, where, when)
+def merge_events(events):
+    merged_events = events.copy()
+    to_remove = set()
 
-# Example usage
-alpha = 0.5 # Define alpha threshold for PageRank score
-events = graph_processing(G, pagerank_scores, alpha)
+    for i, e in enumerate(merged_events):
+        for j, e_prime in enumerate(merged_events[i+1:], start=i+1):
+            if set(e['what']) & set(e_prime['what']):  
+                if set(e['who']) & set(e_prime['who']) or set(e['where']) & set(e_prime['where']):
+                   
+                    merged_event = {
+                        'what': list(set(e['what']) | set(e_prime['what'])),
+                        'who': list(set(e['who']) | set(e_prime['who'])),
+                        'where': list(set(e['where']) | set(e_prime['where'])),
+                        'when': min(e['when'], e_prime['when'])  
+                    }
+                    merged_events[i] = merged_event
+                    to_remove.add(j)
 
+    
+    merged_events = [e for i, e in enumerate(merged_events) if i not in to_remove]
+
+    final_events = [e for e in merged_events if e['who'] or e['where']]
+
+    return final_events
+
+
+with driver.session() as session:
+    session.execute_write(compute_community_detection)
+    subgraphs = session.execute_read(fetch_subgraphs)
+
+
+dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/cleaned_english_tweets.csv"
+dataset_path = pathlib.Path(__file__).parent.parent.absolute() / "dataset/cleaned_italian_tweets.csv"
+dataset = pd.read_csv(dataset_path, sep=';')
+cleaned_tweets = dataset['cleaned_tweets'].tolist()
+
+tfidf_dict = compute_tfidf_scores(cleaned_tweets)
+
+all_events = []
+
+for index,subgraph in subgraphs.items():
+
+    pagerank_scores = compute_pagerank(subgraph, tfidf_dict)
+    alpha = 0.5 #alpha threshold for PageRank score
+    events = (graph_processing(subgraph, pagerank_scores, alpha))
+    for e in events:
+        all_events.append(e)
+
+
+all_events = merge_events(all_events)
+
+print(len(all_events))
+for event in all_events:
+    #print(f'What: {event[0]}, Who: {event[1]}, Where: {event[2]}, When: {event[3]}')
+    print(event)
